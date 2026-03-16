@@ -180,6 +180,99 @@ def fetch_table_counts():
         return row
 
 
+def fetch_user_network_edges():
+    return db_fetchall(
+        """
+        SELECT
+          u1.id AS source_id,
+          u1.navn AS source_name,
+          u2.id AS target_id,
+          u2.navn AS target_name,
+          COUNT(DISTINCT v1.problemId) AS shared_count
+        FROM Vote v1
+        JOIN Vote v2
+          ON v1.problemId = v2.problemId
+         AND v1.userId < v2.userId
+        JOIN Users u1 ON u1.id = v1.userId
+        JOIN Users u2 ON u2.id = v2.userId
+        GROUP BY u1.id, u1.navn, u2.id, u2.navn
+        ORDER BY shared_count DESC, u1.navn, u2.navn
+        """
+    )
+
+
+def fetch_all_users():
+    return db_fetchall(
+        """
+                SELECT
+                    u.id,
+                    u.navn,
+                    COALESCE((
+                        SELECT COUNT(DISTINCT v.problemId)
+                        FROM Vote v
+                        WHERE v.userId = u.id
+                    ), 0) AS vote_count
+        FROM Users
+        ORDER BY navn COLLATE NOCASE
+        """
+    )
+
+
+def _dot_escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _color_for_votes(vote_count: int, max_votes: int) -> str:
+    # Warm beige -> brown gradient used by the rest of the UI.
+    if max_votes <= 0:
+        return "#f7ead0"
+    ratio = max(0.0, min(1.0, vote_count / max_votes))
+    if ratio < 0.2:
+        return "#f7ead0"
+    if ratio < 0.4:
+        return "#efd1a8"
+    if ratio < 0.6:
+        return "#dfb07b"
+    if ratio < 0.8:
+        return "#c9874d"
+    return "#a8612f"
+
+
+def build_user_network_dot(users, edges):
+    max_votes = 0
+    for user in users:
+        max_votes = max(max_votes, int(user.get("vote_count", 0)))
+
+    lines = [
+        "graph G {",
+        "  layout=neato;",
+        "  overlap=false;",
+        "  splines=true;",
+        "  node [shape=circle, style=filled, color=\"#8B4513\", fontname=\"Helvetica\", fontcolor=\"#2c1d10\"];",
+        "  edge [color=\"#b08a5a\", fontname=\"Helvetica\", fontsize=10];",
+    ]
+
+    for user in users:
+        uid = int(user["id"])
+        label = _dot_escape(str(user["navn"]))
+        votes = int(user.get("vote_count", 0))
+        fill = _color_for_votes(votes, max_votes)
+        width = 0.9 + (1.2 * (votes / max_votes)) if max_votes > 0 else 0.9
+        lines.append(
+            f'  u{uid} [label="{label}\\n({votes})", fillcolor="{fill}", width={width:.2f}, height={width:.2f}, fixedsize=true];'
+        )
+
+    for edge in edges:
+        a = int(edge["source_id"])
+        b = int(edge["target_id"])
+        w = int(edge["shared_count"])
+        penwidth = min(1 + w, 8)
+        lines.append(f'  u{a} -- u{b} [label="{w}", penwidth={penwidth}];')
+
+    lines.append("}")
+    return "\n".join(lines)
+
+
 def handle_pending_vote():
     pid = st.session_state.get("busy_vote_pid")
     action = st.session_state.get("busy_vote_action")
@@ -411,6 +504,8 @@ with tab3:
         problem_rows = fetch_problem_overview_rows()
         user_rows = fetch_user_overview_rows()
         counts = fetch_table_counts()
+        users = fetch_all_users()
+        network_edges = fetch_user_network_edges()
     except Exception as e:
         st.error(f"Kunne ikke hente oversigt: {e}")
         st.stop()
@@ -433,3 +528,15 @@ with tab3:
         st.info("Ingen brugere i databasen endnu.")
     else:
         st.dataframe(user_rows, use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.markdown("**Netvaerksgraf over brugerrelationer**")
+    st.caption("Kant vaegt = antal faelles udfordringer, som to brugere begge har valgt.")
+
+    if len(users) < 2:
+        st.info("Der skal vaere mindst 2 brugere for at vise netvaerksgrafen.")
+    elif not network_edges:
+        st.info("Der er endnu ingen faelles valg mellem brugere.")
+    else:
+        dot = build_user_network_dot(users, network_edges)
+        st.graphviz_chart(dot, use_container_width=True)
