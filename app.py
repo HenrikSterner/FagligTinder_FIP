@@ -298,6 +298,10 @@ st.session_state.setdefault("voted_problem_ids", set())  # session-only guard
 st.session_state.setdefault("creating_user", False)
 st.session_state.setdefault("pending_user_name", "")
 st.session_state.setdefault("creating_problem", False)
+st.session_state.setdefault("pending_problem_text", "")
+st.session_state.setdefault("new_problem_text", "")
+st.session_state.setdefault("hide_own_problems", True)
+st.session_state.setdefault("just_created_problem_id", None)
 st.session_state.setdefault("busy_vote_pid", None)
 st.session_state.setdefault("busy_vote_action", None)   # "yes" eller "undo"
 st.session_state.setdefault("vote_busy", False)
@@ -350,6 +354,11 @@ with tab1:
 
         st.subheader(f"Velkommen {st.session_state['user_name']} ")
         st.write("Vaelg foerst de udfordringer du gerne vil tale om, og klik derefter **Gem valg**.")
+
+        if st.session_state.get("just_created_problem_id") is not None:
+            st.success(f"Udfordring oprettet (#{st.session_state['just_created_problem_id']}).")
+            st.session_state["just_created_problem_id"] = None
+
         # --- Liste over udfordringer ---
         try:
             problems = list_problems()
@@ -357,7 +366,7 @@ with tab1:
             st.error(f"Kunne ikke hente udfordringer: {e}")
             problems = []
 
-        hide_own = st.checkbox("Skjul mine egne udfordringer", value=True)
+        hide_own = st.checkbox("Skjul mine egne udfordringer", key="hide_own_problems")
         if hide_own:
             problems = [p for p in problems if p.get("userId") != st.session_state["user_id"]]
 
@@ -434,19 +443,28 @@ with tab1:
         st.subheader("Kan du ikke finde en lignende? Opret din egen")
 
         max_len = 280
-        tekst = st.text_area("Din udfordring", height=120)
+        tekst = st.text_area("Din udfordring", key="new_problem_text", height=120)
 
         if st.button("Indsend udfordring", type="primary", disabled=st.session_state["creating_problem"]):
-            st.session_state["pending_problem_text"] = tekst.strip()
-            st.session_state["creating_problem"] = True
-            st.rerun()
+            candidate = tekst.strip()
+            if not candidate:
+                st.warning("Skriv en udfordring foerst.")
+            elif len(candidate) > max_len:
+                st.warning(f"Din udfordring er for lang (max {max_len} tegn).")
+            else:
+                st.session_state["pending_problem_text"] = candidate
+                st.session_state["creating_problem"] = True
+                st.rerun()
 
         if st.session_state["creating_problem"]:
             with st.spinner("Opretter udfordring..."):
                 try:
                     pid = create_problem(st.session_state["user_id"], st.session_state["pending_problem_text"])
                     st.session_state["creating_problem"] = False
-                    st.success(f"Udfordring oprettet (#{pid}).")
+                    st.session_state["pending_problem_text"] = ""
+                    st.session_state["new_problem_text"] = ""
+                    st.session_state["hide_own_problems"] = False
+                    st.session_state["just_created_problem_id"] = pid
                     st.rerun()
                 except Exception as e:
                     st.session_state["creating_problem"] = False
