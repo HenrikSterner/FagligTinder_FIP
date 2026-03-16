@@ -45,11 +45,6 @@ def list_problems():
 def create_problem(user_id: int, tekst: str) -> int:
     tekst = tekst.strip()
     pid = int(db_execute("INSERT INTO Problem (tekst, userId) VALUES (?, ?)", (tekst, user_id)))
-    # auto-vote for own problem
-    try:
-        db_execute("INSERT INTO Vote (problemId, userId) VALUES (?, ?)", (pid, user_id))
-    except Exception:
-        pass
     return pid
 
 def vote_yes(user_id: int, problem_id: int):
@@ -354,19 +349,7 @@ with tab1:
                 st.success("Du kan stadig vælge.")
 
         st.subheader(f"Velkommen {st.session_state['user_name']} ")
-        st.write("Klik **Ja** på de udfordringer du gerne vil tale om. Hvis der findes en lignende, så stem ja i stedet for at oprette en ny.")
-
-        if st.session_state["busy_vote_pid"] is not None:
-            with st.spinner("Gemmer valg..."):
-                try:
-                    handle_pending_vote()
-                    st.rerun()
-                except Exception as e:
-                    st.session_state["busy_vote_pid"] = None
-                    st.session_state["busy_vote_action"] = None
-                    st.error(f"Kunne ikke gemme valg: {e}")
-        if st.session_state["vote_busy"]:
-            st.info("Gemmer valg...")
+        st.write("Vaelg foerst de udfordringer du gerne vil tale om, og klik derefter **Gem valg**.")
         # --- Liste over udfordringer ---
         try:
             problems = list_problems()
@@ -383,46 +366,52 @@ with tab1:
         else:
                   
             # beregn én gang
-            used = count_choices(st.session_state["user_id"])
-            limit_reached = used >= MAX_CHOICES
+            existing_votes = my_votes(st.session_state["user_id"])
+            existing_ids = {int(v["problemId"]) for v in existing_votes}
+            visible_ids = {int(p["id"]) for p in problems}
 
-            for p in problems:
-                pid = int(p["id"])
-                tekst = p["tekst"]
-                oprettet_af = p.get("oprettet_af") or "ukendt"
+            with st.form("vote_form"):
+                st.caption(f"Du kan vaelge op til {MAX_CHOICES} udfordringer.")
 
-                # check i DB om brugeren har stemt på denne
-                has_voted = has_voted_db(st.session_state["user_id"], pid)
+                for p in problems:
+                    pid = int(p["id"])
+                    tekst = p["tekst"]
+                    oprettet_af = p.get("oprettet_af") or "ukendt"
 
-                with st.container(border=True):
-                    st.markdown(f"**#{pid}** — {tekst}")
-                    st.caption(f"Oprettet af: {oprettet_af}")
+                    key = f"vote_pick_{st.session_state['user_id']}_{pid}"
+                    if key not in st.session_state:
+                        st.session_state[key] = pid in existing_ids
 
-                    # Hvis stemt: vis Fortryd (altid aktiv)
-                    if has_voted:
-                        if st.button(
-                            "↩️ Fortryd",
-                        key=f"undo_{pid}",
-                        disabled=st.session_state["vote_busy"],
-                        ):
-                            st.session_state["busy_vote_pid"] = pid
-                            st.session_state["busy_vote_action"] = "undo"
-                            st.rerun()
-                            st.session_state["busy_vote_pid"] = pid
-                            st.session_state["busy_vote_action"] = "undo"
-                            st.rerun()
-                    # Hvis ikke stemt: vis Ja (deaktiveres hvis grænse nået)
-                    else:
-                        if st.button(
-                            "✅ Ja",
-                            key=f"yes_{pid}",
-                            disabled=(limit_reached or st.session_state["vote_busy"]),
-                        ):
-                            st.session_state["busy_vote_pid"] = pid
-                            st.session_state["busy_vote_action"] = "yes"
-                            st.rerun()
+                    st.checkbox(
+                        f"#{pid} - {tekst} (oprettet af: {oprettet_af})",
+                        key=key,
+                    )
 
+                submitted = st.form_submit_button("Gem valg", type="primary")
 
+            if submitted:
+                selected_visible_ids = {
+                    int(p["id"])
+                    for p in problems
+                    if st.session_state.get(f"vote_pick_{st.session_state['user_id']}_{int(p['id'])}", False)
+                }
+
+                if len(selected_visible_ids) > MAX_CHOICES:
+                    st.error(f"Du kan maks vaelge {MAX_CHOICES} udfordringer.")
+                else:
+                    current_visible_ids = existing_ids & visible_ids
+                    to_add = selected_visible_ids - current_visible_ids
+                    to_remove = current_visible_ids - selected_visible_ids
+
+                    try:
+                        for pid in to_add:
+                            vote_yes(st.session_state["user_id"], pid)
+                        for pid in to_remove:
+                            vote_remove(st.session_state["user_id"], pid)
+                        st.success("Dine valg er gemt.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Kunne ikke gemme valg: {e}")
 
 
         # --- Mine valg ---

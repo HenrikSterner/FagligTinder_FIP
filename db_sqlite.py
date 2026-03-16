@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import time
 
 import streamlit as st
 
@@ -17,10 +18,18 @@ def _db_path() -> str:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path())
+    conn = sqlite3.connect(_db_path(), timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA busy_timeout = 10000")
     return conn
+
+
+def _is_locked_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "database is locked" in msg or "database table is locked" in msg
 
 
 def init_db() -> None:
@@ -55,30 +64,60 @@ def init_db() -> None:
 
 
 def fetchone(sql: str, params=()):
-    conn = _connect()
-    try:
-        cur = conn.execute(sql, params)
-        row = cur.fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
+    last_exc = None
+    for attempt in range(5):
+        conn = _connect()
+        try:
+            cur = conn.execute(sql, params)
+            row = cur.fetchone()
+            return dict(row) if row else None
+        except sqlite3.OperationalError as exc:
+            last_exc = exc
+            if _is_locked_error(exc) and attempt < 4:
+                time.sleep(0.05 * (2 ** attempt))
+                continue
+            raise
+        finally:
+            conn.close()
+    if last_exc:
+        raise last_exc
 
 
 def fetchall(sql: str, params=()):
-    conn = _connect()
-    try:
-        cur = conn.execute(sql, params)
-        rows = cur.fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
+    last_exc = None
+    for attempt in range(5):
+        conn = _connect()
+        try:
+            cur = conn.execute(sql, params)
+            rows = cur.fetchall()
+            return [dict(r) for r in rows]
+        except sqlite3.OperationalError as exc:
+            last_exc = exc
+            if _is_locked_error(exc) and attempt < 4:
+                time.sleep(0.05 * (2 ** attempt))
+                continue
+            raise
+        finally:
+            conn.close()
+    if last_exc:
+        raise last_exc
 
 
 def execute(sql: str, params=()):
-    conn = _connect()
-    try:
-        cur = conn.execute(sql, params)
-        conn.commit()
-        return cur.lastrowid
-    finally:
-        conn.close()
+    last_exc = None
+    for attempt in range(6):
+        conn = _connect()
+        try:
+            cur = conn.execute(sql, params)
+            conn.commit()
+            return cur.lastrowid
+        except sqlite3.OperationalError as exc:
+            last_exc = exc
+            if _is_locked_error(exc) and attempt < 5:
+                time.sleep(0.08 * (2 ** attempt))
+                continue
+            raise
+        finally:
+            conn.close()
+    if last_exc:
+        raise last_exc
