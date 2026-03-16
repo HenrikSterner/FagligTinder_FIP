@@ -110,6 +110,76 @@ def matches_for_user(user_id: int):
         """,
         (user_id,),
     )
+
+
+def fetch_problem_overview_rows():
+        return db_fetchall(
+                """
+                SELECT
+                    p.id AS problem_id,
+                    p.tekst AS udfordring,
+                    COALESCE((
+                        SELECT COUNT(DISTINCT v.userId)
+                        FROM Vote v
+                        WHERE v.problemId = p.id
+                    ), 0) AS antal_valg,
+                    COALESCE((
+                        SELECT GROUP_CONCAT(navn, ', ')
+                        FROM (
+                            SELECT DISTINCT u2.navn AS navn
+                            FROM Vote v
+                            JOIN Users u2 ON u2.id = v.userId
+                            WHERE v.problemId = p.id
+                            ORDER BY u2.navn COLLATE NOCASE
+                        )
+                    ), '') AS valgt_af
+                FROM Problem p
+                ORDER BY p.id ASC;
+                """
+        )
+
+
+def fetch_user_overview_rows():
+        return db_fetchall(
+                """
+                SELECT
+                    u.id AS user_id,
+                    u.navn AS bruger,
+                    COALESCE((
+                        SELECT COUNT(DISTINCT v.problemId)
+                        FROM Vote v
+                        WHERE v.userId = u.id
+                    ), 0) AS antal_valg,
+                    COALESCE((
+                        SELECT GROUP_CONCAT(problem_txt, ' | ')
+                        FROM (
+                            SELECT DISTINCT printf('#%d %s', p.id, p.tekst) AS problem_txt
+                            FROM Vote v
+                            JOIN Problem p ON p.id = v.problemId
+                            WHERE v.userId = u.id
+                            ORDER BY p.id
+                        )
+                    ), '') AS valgte_udfordringer
+                FROM Users u
+                ORDER BY u.navn COLLATE NOCASE;
+                """
+        )
+
+
+def fetch_table_counts():
+        row = db_fetchone(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM Users) AS users_count,
+                    (SELECT COUNT(*) FROM Problem) AS problem_count,
+                    (SELECT COUNT(*) FROM Vote) AS vote_count
+                """
+        )
+        if not row:
+                return {"users_count": 0, "problem_count": 0, "vote_count": 0}
+        return row
+
+
 def handle_pending_vote():
     pid = st.session_state.get("busy_vote_pid")
     action = st.session_state.get("busy_vote_action")
@@ -146,7 +216,7 @@ st.session_state.setdefault("vote_busy", False)
 
 MAX_CHOICES = 2
 
-tab1, tab2 = st.tabs(["Udfordringer", "Matches"])
+tab1, tab2, tab3 = st.tabs(["Udfordringer", "Matches", "Oversigt"])
 
 # -------------------------
 # TAB 1: Udfordringer
@@ -329,3 +399,37 @@ with tab2:
                     uniq_people = sorted(set(info["people"]))
                     st.write("**Andre der har stemt ja:**")
                     st.write(", ".join(uniq_people))
+
+# -------------------------
+# TAB 3: Oversigt
+# -------------------------
+with tab3:
+    st.subheader("Oversigt")
+    st.write("Overblik over udfordringer, stemmer og brugernes valg.")
+
+    try:
+        problem_rows = fetch_problem_overview_rows()
+        user_rows = fetch_user_overview_rows()
+        counts = fetch_table_counts()
+    except Exception as e:
+        st.error(f"Kunne ikke hente oversigt: {e}")
+        st.stop()
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Users", int(counts.get("users_count", 0)))
+    c2.metric("Problem", int(counts.get("problem_count", 0)))
+    c3.metric("Vote", int(counts.get("vote_count", 0)))
+
+    st.divider()
+    st.markdown("**Udfordringer og stemmer**")
+    if not problem_rows:
+        st.info("Ingen udfordringer i databasen endnu.")
+    else:
+        st.dataframe(problem_rows, use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.markdown("**Brugere og deres valg**")
+    if not user_rows:
+        st.info("Ingen brugere i databasen endnu.")
+    else:
+        st.dataframe(user_rows, use_container_width=True, hide_index=True)
