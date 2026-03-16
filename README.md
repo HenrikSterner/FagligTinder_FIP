@@ -4,7 +4,7 @@ Denne version bruger SQLite i stedet for MySQL.
 
 ## Filer
 - `app.py`: Bruger-app til at oprette bruger, udfordringer og stemme
-- `overwiev_app.py`: Oversigt over udfordringer og hvem der har valgt dem
+- `overview_app.py`: Oversigt over udfordringer og hvem der har valgt dem
 - `db_sqlite.py`: Database-lag og auto-oprettelse af tabeller
 - `requirements.txt`: Python dependencies
 
@@ -23,7 +23,7 @@ streamlit run app.py
 
 For oversigtssiden:
 ```bash
-streamlit run overwiev_app.py
+streamlit run overview_app.py
 ```
 
 ## Publish (Streamlit Cloud)

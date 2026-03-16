@@ -6,7 +6,11 @@ import streamlit as st
 
 def _db_path() -> str:
     # Optional override via secrets, fallback to local db file next to app files.
-    configured = st.secrets.get("sqlite_db_path")
+    configured = None
+    try:
+        configured = st.secrets.get("sqlite_db_path")
+    except Exception:
+        configured = None
     if configured:
         return str(configured)
     return os.path.join(os.path.dirname(__file__), "faglig_tinder.db")
