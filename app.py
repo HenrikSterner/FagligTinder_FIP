@@ -299,8 +299,7 @@ st.session_state.setdefault("creating_user", False)
 st.session_state.setdefault("pending_user_name", "")
 st.session_state.setdefault("creating_problem", False)
 st.session_state.setdefault("pending_problem_text", "")
-st.session_state.setdefault("new_problem_text", "")
-st.session_state.setdefault("clear_new_problem_text", False)
+st.session_state.setdefault("problem_input_nonce", 0)
 st.session_state.setdefault("hide_own_problems", True)
 st.session_state.setdefault("just_created_problem_id", None)
 st.session_state.setdefault("busy_vote_pid", None)
@@ -443,12 +442,9 @@ with tab1:
         st.divider()
         st.subheader("Kan du ikke finde en lignende? Opret din egen")
 
-        if st.session_state.get("clear_new_problem_text"):
-            st.session_state["new_problem_text"] = ""
-            st.session_state["clear_new_problem_text"] = False
-
         max_len = 280
-        tekst = st.text_area("Din udfordring", key="new_problem_text", height=120)
+        problem_input_key = f"new_problem_text_{st.session_state['problem_input_nonce']}"
+        tekst = st.text_area("Din udfordring", key=problem_input_key, height=120)
 
         if st.button("Indsend udfordring", type="primary", disabled=st.session_state["creating_problem"]):
             candidate = tekst.strip()
@@ -467,7 +463,7 @@ with tab1:
                     pid = create_problem(st.session_state["user_id"], st.session_state["pending_problem_text"])
                     st.session_state["creating_problem"] = False
                     st.session_state["pending_problem_text"] = ""
-                    st.session_state["clear_new_problem_text"] = True
+                    st.session_state["problem_input_nonce"] += 1
                     st.session_state["hide_own_problems"] = False
                     st.session_state["just_created_problem_id"] = pid
                     st.rerun()
