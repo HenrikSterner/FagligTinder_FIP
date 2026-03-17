@@ -8,6 +8,7 @@ import streamlit as st
 try:
     import psycopg2
     import psycopg2.extras
+    import psycopg2.pool
 except Exception:
     psycopg2 = None
 
@@ -29,6 +30,20 @@ def _get_database_url() -> str | None:
 
 def _use_postgres() -> bool:
     return bool(_get_database_url()) and psycopg2 is not None
+
+
+@st.cache_resource(show_spinner=False)
+def _postgres_pool(database_url: str):
+    if psycopg2 is None:
+        raise RuntimeError("psycopg2 is not installed")
+
+    return psycopg2.pool.ThreadedConnectionPool(
+        1,
+        5,
+        dsn=database_url,
+        connect_timeout=10,
+        application_name="faglig_tinder",
+    )
 
 
 def _db_path() -> str:
@@ -54,11 +69,25 @@ def _is_locked_error(exc: Exception) -> bool:
 @contextmanager
 def _connect():
     if _use_postgres():
-        conn = psycopg2.connect(_get_database_url())
+        pool = _postgres_pool(_get_database_url())
+        conn = pool.getconn()
         try:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+            except Exception:
+                try:
+                    pool.putconn(conn, close=True)
+                except Exception:
+                    conn.close()
+                conn = pool.getconn()
             yield conn
         finally:
-            conn.close()
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            pool.putconn(conn)
         return
 
     conn = sqlite3.connect(_db_path(), timeout=10.0)
@@ -95,6 +124,9 @@ def init_db() -> None:
                         problemId BIGINT NOT NULL REFERENCES Problem(id) ON DELETE CASCADE,
                         PRIMARY KEY (userId, problemId)
                     );
+
+                    CREATE INDEX IF NOT EXISTS idx_problem_user ON Problem(userId);
+                    CREATE INDEX IF NOT EXISTS idx_vote_problem_user ON Vote(problemId, userId);
                     """
                 )
             conn.commit()
@@ -122,6 +154,9 @@ def init_db() -> None:
                 FOREIGN KEY (userId) REFERENCES Users(id) ON DELETE CASCADE,
                 FOREIGN KEY (problemId) REFERENCES Problem(id) ON DELETE CASCADE
             );
+
+            CREATE INDEX IF NOT EXISTS idx_problem_user ON Problem(userId);
+            CREATE INDEX IF NOT EXISTS idx_vote_problem_user ON Vote(problemId, userId);
             """
         )
         conn.commit()

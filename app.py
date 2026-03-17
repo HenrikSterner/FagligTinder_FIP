@@ -8,7 +8,17 @@ from db_sqlite import init_db
 
 st.set_page_config(page_title="Faglig Tinder", layout="centered")
 
-init_db()
+@st.cache_resource(show_spinner=False)
+def ensure_db_ready():
+    init_db()
+    return True
+
+
+def invalidate_data_cache():
+    st.cache_data.clear()
+
+
+ensure_db_ready()
 
 # -------------------------
 # App helpers
@@ -25,6 +35,7 @@ def ensure_user_strict(navn: str) -> int:
 
     try:
         user_id = db_execute("INSERT INTO Users (navn) VALUES (?) RETURNING id", (navn,))
+        invalidate_data_cache()
         return int(user_id)
     except Exception as e:
         msg = str(e).lower()
@@ -32,6 +43,7 @@ def ensure_user_strict(navn: str) -> int:
             raise ValueError("Brugernavnet er optaget. Indtast et andet brugernavn")
         raise
 
+@st.cache_data(ttl=30, show_spinner=False)
 def list_problems():
     return db_fetchall(
         "SELECT p.id, p.tekst, p.userId AS user_id, u.navn AS oprettet_af "
@@ -42,6 +54,7 @@ def list_problems():
 def create_problem(user_id: int, tekst: str) -> int:
     tekst = tekst.strip()
     pid = int(db_execute("INSERT INTO Problem (tekst, userId) VALUES (?, ?) RETURNING id", (tekst, user_id)))
+    invalidate_data_cache()
     return pid
 
 def vote_yes(user_id: int, problem_id: int):
@@ -50,6 +63,7 @@ def vote_yes(user_id: int, problem_id: int):
             "INSERT INTO Vote (problemId, userId) VALUES (?, ?)",
             (problem_id, user_id),
         )
+        invalidate_data_cache()
     except Exception as e:
         msg = str(e).lower()
         if "duplicate" in msg or "unique" in msg:
@@ -61,6 +75,10 @@ def vote_remove(user_id: int, problem_id: int):
         "DELETE FROM Vote WHERE problemId = ? AND userId = ?",
         (problem_id, user_id),
     )
+
+    invalidate_data_cache()
+
+
 def has_voted_db(user_id: int, problem_id: int) -> bool:
     row = db_fetchone(
         "SELECT 1 FROM Vote WHERE problemId=? AND userId=? LIMIT 1",
@@ -69,6 +87,7 @@ def has_voted_db(user_id: int, problem_id: int) -> bool:
     return row is not None
 
 
+@st.cache_data(ttl=30, show_spinner=False)
 def my_votes(user_id: int):
     return db_fetchall(
         "SELECT DISTINCT v.problemId AS problem_id, p.tekst "
@@ -78,6 +97,7 @@ def my_votes(user_id: int):
         (user_id,),
     )
 
+@st.cache_data(ttl=30, show_spinner=False)
 def count_choices(user_id: int) -> int:
     row = db_fetchone(
         "SELECT COUNT(DISTINCT problemId) AS c FROM Vote WHERE userId = ?",
@@ -85,6 +105,7 @@ def count_choices(user_id: int) -> int:
     )
     return int(row["c"] or 0)
 
+@st.cache_data(ttl=30, show_spinner=False)
 def matches_for_user(user_id: int):
     return db_fetchall(
         """
@@ -104,6 +125,7 @@ def matches_for_user(user_id: int):
     )
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_problem_overview_rows():
     problems = db_fetchall(
         """
@@ -139,6 +161,7 @@ def fetch_problem_overview_rows():
     return out
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_user_overview_rows():
     users = db_fetchall(
         """
@@ -174,6 +197,7 @@ def fetch_user_overview_rows():
     return out
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_table_counts():
         row = db_fetchone(
                 """
@@ -188,6 +212,7 @@ def fetch_table_counts():
         return row
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_user_network_edges():
     return db_fetchall(
         """
@@ -209,6 +234,7 @@ def fetch_user_network_edges():
     )
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_all_users():
     return db_fetchall(
         """
@@ -317,12 +343,17 @@ st.session_state.setdefault("vote_busy", False)
 
 MAX_CHOICES = 2
 
-tab1, tab2, tab3 = st.tabs(["Udfordringer", "Matches", "Oversigt"])
+active_page = st.radio(
+    "Side",
+    ["Udfordringer", "Matches", "Oversigt"],
+    horizontal=True,
+    label_visibility="collapsed",
+)
 
 # -------------------------
-# TAB 1: Udfordringer
+# SIDE 1: Udfordringer
 # -------------------------
-with tab1:
+if active_page == "Udfordringer":
     if not st.session_state["user_id"]:
         st.subheader("Opret brugernavn")
         st.write("Når du er oprettet, bliver du præsenteret for de udfordringer der allerede findes.")
@@ -371,9 +402,11 @@ with tab1:
         # --- Liste over udfordringer ---
         try:
             problems = list_problems()
+            existing_votes = my_votes(st.session_state["user_id"])
         except Exception as e:
             st.error(f"Kunne ikke hente udfordringer: {e}")
             problems = []
+            existing_votes = []
 
         problem_filter = st.selectbox(
             "Vis udfordringer",
@@ -390,7 +423,6 @@ with tab1:
         else:
                   
             # beregn én gang
-            existing_votes = my_votes(st.session_state["user_id"])
             existing_ids = {int(v["problem_id"]) for v in existing_votes}
             visible_ids = {int(p["id"]) for p in problems}
 
@@ -441,11 +473,7 @@ with tab1:
         # --- Mine valg ---
         st.divider()
         st.subheader("Mine valg")
-        try:
-            mv = my_votes(st.session_state["user_id"])
-        except Exception as e:
-            mv = []
-            st.error(f"Kunne ikke hente dine valg: {e}")
+        mv = existing_votes
 
         if not mv:
             st.write("Du har ikke stemt ja endnu.")
@@ -477,9 +505,9 @@ with tab1:
                     except Exception as e:
                         st.error(f"Kunne ikke oprette udfordring: {e}")
 # -------------------------
-# TAB 2: Matches
+# SIDE 2: Matches
 # -------------------------
-with tab2:
+elif active_page == "Matches":
     st.subheader("Matches")
     if not st.session_state["user_id"]:
         st.info("Opret et brugernavn på fanen **Udfordringer** for at se matches.")
@@ -508,9 +536,9 @@ with tab2:
                     st.write(", ".join(uniq_people))
 
 # -------------------------
-# TAB 3: Oversigt
+# SIDE 3: Oversigt
 # -------------------------
-with tab3:
+else:
     st.subheader("Oversigt")
     st.write("Overblik over udfordringer, stemmer og brugernes valg.")
 
