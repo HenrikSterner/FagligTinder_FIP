@@ -10,7 +10,7 @@ from db_sqlite import init_db
 
 st.set_page_config(page_title="Faglig Tinder", layout="centered")
 
-st.write("VERSION:", "2026-02-28-TEST")
+st.write("VERSION:", "2026-03-17-FILTERLIST")
 st.write("FILE:", __file__)
 st.write("TIME:", time.time())
 
@@ -40,7 +40,7 @@ def ensure_user_strict(navn: str) -> int:
 
 def list_problems():
     return db_fetchall(
-        "SELECT p.id, p.tekst, p.userId, u.navn AS oprettet_af "
+        "SELECT p.id, p.tekst, p.userId AS user_id, u.navn AS oprettet_af "
         "FROM Problem p LEFT JOIN Users u ON u.id = p.userId "
         "ORDER BY p.id DESC"
     )
@@ -77,7 +77,7 @@ def has_voted_db(user_id: int, problem_id: int) -> bool:
 
 def my_votes(user_id: int):
     return db_fetchall(
-        "SELECT DISTINCT v.problemId, p.tekst "
+        "SELECT DISTINCT v.problemId AS problem_id, p.tekst "
         "FROM Vote v JOIN Problem p ON p.id = v.problemId "
         "WHERE v.userId = ? "
         "ORDER BY v.problemId DESC",
@@ -95,10 +95,10 @@ def matches_for_user(user_id: int):
     return db_fetchall(
         """
         SELECT
-          p.id AS problemId,
-          p.tekst AS problemTekst,
-          u2.id AS otherUserId,
-          u2.navn AS otherNavn
+                    p.id AS problem_id,
+                    p.tekst AS problem_tekst,
+                    u2.id AS other_user_id,
+                    u2.navn AS other_navn
         FROM Vote v_me
         JOIN Problem p ON p.id = v_me.problemId
         JOIN Vote v_other ON v_other.problemId = v_me.problemId AND v_other.userId <> v_me.userId
@@ -381,9 +381,15 @@ with tab1:
             st.error(f"Kunne ikke hente udfordringer: {e}")
             problems = []
 
-        hide_own = st.checkbox("Skjul mine egne udfordringer", value=False)
-        if hide_own:
-            problems = [p for p in problems if p.get("userId") != st.session_state["user_id"]]
+        problem_filter = st.selectbox(
+            "Vis udfordringer",
+            ["Alle", "Kun andres", "Kun mine"],
+            index=1,
+        )
+        if problem_filter == "Kun andres":
+            problems = [p for p in problems if p.get("user_id") != st.session_state["user_id"]]
+        elif problem_filter == "Kun mine":
+            problems = [p for p in problems if p.get("user_id") == st.session_state["user_id"]]
 
         if not problems:
             st.info("Ingen udfordringer endnu.")
@@ -391,7 +397,7 @@ with tab1:
                   
             # beregn én gang
             existing_votes = my_votes(st.session_state["user_id"])
-            existing_ids = {int(v["problemId"]) for v in existing_votes}
+            existing_ids = {int(v["problem_id"]) for v in existing_votes}
             visible_ids = {int(p["id"]) for p in problems}
 
             with st.form("vote_form"):
@@ -451,7 +457,7 @@ with tab1:
             st.write("Du har ikke stemt ja endnu.")
         else:
             for row in mv:
-                st.write(f"• **#{row['problemId']}** — {row['tekst']}")
+                st.write(f"• **#{row['problem_id']}** — {row['tekst']}")
 
         # --- Opret egen udfordring nederst ---
         st.divider()
@@ -497,9 +503,9 @@ with tab2:
         else:
             by_problem = {}
             for r in rows:
-                pid = int(r["problemId"])
-                by_problem.setdefault(pid, {"tekst": r["problemTekst"], "people": []})
-                by_problem[pid]["people"].append(r["otherNavn"])
+                pid = int(r["problem_id"])
+                by_problem.setdefault(pid, {"tekst": r["problem_tekst"], "people": []})
+                by_problem[pid]["people"].append(r["other_navn"])
 
             for pid, info in by_problem.items():
                 with st.expander(f"#{pid} — {info['tekst']}", expanded=True):
