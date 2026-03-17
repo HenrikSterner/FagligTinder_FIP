@@ -341,7 +341,7 @@ st.session_state.setdefault("busy_vote_pid", None)
 st.session_state.setdefault("busy_vote_action", None)   # "yes" eller "undo"
 st.session_state.setdefault("vote_busy", False)
 
-MAX_CHOICES = 2
+MAX_CHOICES = 1
 
 active_page = st.radio(
     "Side",
@@ -388,12 +388,12 @@ if active_page == "Udfordringer":
             st.subheader("Status")
             st.metric("Valg brugt", f"{used}/{MAX_CHOICES}")
             if limit_reached:
-                st.error("Du har nået maksimum.")
+                st.info("Du har valgt en udfordring, men du kan stadig ændre dit valg.")
             else:
-                st.success("Du kan stadig vælge.")
+                st.success("Du kan vælge en udfordring.")
 
         st.subheader(f"Velkommen {st.session_state['user_name']} ")
-        st.write("Vaelg foerst de udfordringer du gerne vil tale om, og klik derefter **Gem valg**.")
+        st.write("Vælg den udfordring du gerne vil tale om, og klik derefter **Gem valg**.")
 
         if st.session_state.get("just_created_problem_id") is not None:
             st.success(f"Udfordring oprettet (#{st.session_state['just_created_problem_id']}).")
@@ -427,7 +427,7 @@ if active_page == "Udfordringer":
             visible_ids = {int(p["id"]) for p in problems}
 
             with st.form("vote_form"):
-                st.caption(f"Du kan vaelge op til {MAX_CHOICES} udfordringer.")
+                st.caption("Du kan vælge én udfordring ad gangen, og du kan altid ændre dit valg igen.")
 
                 for p in problems:
                     pid = int(p["id"])
@@ -435,8 +435,7 @@ if active_page == "Udfordringer":
                     oprettet_af = p.get("oprettet_af") or "ukendt"
 
                     key = f"vote_pick_{st.session_state['user_id']}_{pid}"
-                    if key not in st.session_state:
-                        st.session_state[key] = pid in existing_ids
+                    st.session_state[key] = pid in existing_ids
 
                     st.checkbox(
                         f"#{pid} - {tekst} (oprettet af: {oprettet_af})",
@@ -452,12 +451,20 @@ if active_page == "Udfordringer":
                     if st.session_state.get(f"vote_pick_{st.session_state['user_id']}_{int(p['id'])}", False)
                 }
 
+                hidden_existing_ids = existing_ids - visible_ids
+
                 if len(selected_visible_ids) > MAX_CHOICES:
-                    st.error(f"Du kan maks vaelge {MAX_CHOICES} udfordringer.")
+                    st.error("Du kan kun vælge én udfordring.")
                 else:
-                    current_visible_ids = existing_ids & visible_ids
-                    to_add = selected_visible_ids - current_visible_ids
-                    to_remove = current_visible_ids - selected_visible_ids
+                    if selected_visible_ids:
+                        desired_ids = set(selected_visible_ids)
+                    elif problem_filter == "Alle":
+                        desired_ids = set()
+                    else:
+                        desired_ids = set(hidden_existing_ids)
+
+                    to_add = desired_ids - existing_ids
+                    to_remove = existing_ids - desired_ids
 
                     try:
                         for pid in to_add:
@@ -552,6 +559,16 @@ else:
         st.error(f"Kunne ikke hente oversigt: {e}")
         st.stop()
 
+    st.markdown("**Hurtigt overblik over udfordringer**")
+    if not problem_rows:
+        st.info("Ingen udfordringer i databasen endnu.")
+    else:
+        for row in problem_rows:
+            valgt_af = row.get("valgt_af") or "Ingen endnu"
+            st.write(f"**#{row['problem_id']} - {row['udfordring']}**")
+            st.write(f"Valgt af: {valgt_af}")
+
+    st.divider()
     c1, c2, c3 = st.columns(3)
     c1.metric("Users", int(counts.get("users_count", 0)))
     c2.metric("Problem", int(counts.get("problem_count", 0)))
