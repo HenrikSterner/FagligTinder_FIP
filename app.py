@@ -226,8 +226,8 @@ def fetch_all_users():
                         FROM Vote v
                         WHERE v.userId = u.id
                     ), 0) AS vote_count
-        FROM Users
-        ORDER BY LOWER(navn)
+        FROM Users u
+        ORDER BY LOWER(u.navn)
         """
     )
 
