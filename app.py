@@ -6,7 +6,7 @@ from db_sqlite import fetchall as db_fetchall
 from db_sqlite import fetchone as db_fetchone
 from db_sqlite import init_db
 
-st.set_page_config(page_title="Faglig Tinder", layout="centered")
+st.set_page_config(page_title="Vejle FIP 19.03.2026", layout="centered")
 
 @st.cache_resource(show_spinner=False)
 def ensure_db_ready():
@@ -329,7 +329,7 @@ def handle_pending_vote():
 # -------------------------
 # UI
 # -------------------------
-st.title("Faglig Tinder")
+st.title("Vejle FIP 19.03.2026")
 
 st.session_state.setdefault("user_id", None)
 st.session_state.setdefault("user_name", "")
@@ -476,7 +476,7 @@ if active_page == "Udfordringer":
         mv = existing_votes
 
         if not mv:
-            st.write("Du har ikke stemt ja endnu.")
+            st.write("Du har ikke valgt endnu.")
         else:
             for row in mv:
                 st.write(f"• **#{row['problem_id']}** — {row['tekst']}")
