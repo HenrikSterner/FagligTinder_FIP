@@ -341,6 +341,7 @@ st.session_state.setdefault("busy_vote_pid", None)
 st.session_state.setdefault("busy_vote_action", None)   # "yes" eller "undo"
 st.session_state.setdefault("vote_busy", False)
 st.session_state.setdefault("vote_form_seed", None)
+st.session_state.setdefault("vote_selected_problem_id", None)
 
 MAX_CHOICES = 1
 
@@ -426,67 +427,64 @@ if active_page == "Udfordringer":
             # beregn én gang
             existing_ids = {int(v["problem_id"]) for v in existing_votes}
             visible_ids = {int(p["id"]) for p in problems}
+            current_selected_id = next(iter(sorted(existing_ids)), None)
             vote_form_seed = (
                 st.session_state["user_id"],
-                tuple(sorted(existing_ids)),
+                current_selected_id,
                 tuple(sorted(visible_ids)),
             )
 
             if st.session_state.get("vote_form_seed") != vote_form_seed:
-                for p in problems:
-                    pid = int(p["id"])
-                    key = f"vote_pick_{st.session_state['user_id']}_{pid}"
-                    st.session_state[key] = pid in existing_ids
+                st.session_state["vote_selected_problem_id"] = (
+                    current_selected_id if current_selected_id in visible_ids else None
+                )
                 st.session_state["vote_form_seed"] = vote_form_seed
 
             with st.form("vote_form"):
-                st.caption("Du kan vælge én udfordring ad gangen, og du kan altid ændre dit valg igen.")
+                st.caption("Du kan kun vælge én udfordring ad gangen.")
 
+                if current_selected_id is not None and current_selected_id not in visible_ids:
+                    st.info("Dit nuværende valg er skjult af filtret. Vælg en synlig udfordring for at skifte.")
+
+                option_ids = [None] + [int(p["id"]) for p in problems]
+                labels_by_id = {}
                 for p in problems:
                     pid = int(p["id"])
-                    tekst = p["tekst"]
                     oprettet_af = p.get("oprettet_af") or "ukendt"
+                    labels_by_id[pid] = f"#{pid} - {p['tekst']} (oprettet af: {oprettet_af})"
 
-                    key = f"vote_pick_{st.session_state['user_id']}_{pid}"
-
-                    st.checkbox(
-                        f"#{pid} - {tekst} (oprettet af: {oprettet_af})",
-                        key=key,
-                    )
+                st.radio(
+                    "Udfordring",
+                    options=option_ids,
+                    key="vote_selected_problem_id",
+                    format_func=lambda pid: "Ingen valgt" if pid is None else labels_by_id.get(pid, str(pid)),
+                )
 
                 submitted = st.form_submit_button("Gem valg", type="primary")
 
             if submitted:
-                selected_visible_ids = {
-                    int(p["id"])
-                    for p in problems
-                    if st.session_state.get(f"vote_pick_{st.session_state['user_id']}_{int(p['id'])}", False)
-                }
-
                 hidden_existing_ids = existing_ids - visible_ids
+                selected_visible_id = st.session_state.get("vote_selected_problem_id")
 
-                if len(selected_visible_ids) > MAX_CHOICES:
-                    st.error("Du kan kun vælge én udfordring.")
+                if selected_visible_id is not None:
+                    desired_ids = {int(selected_visible_id)}
+                elif problem_filter == "Alle":
+                    desired_ids = set()
                 else:
-                    if selected_visible_ids:
-                        desired_ids = set(selected_visible_ids)
-                    elif problem_filter == "Alle":
-                        desired_ids = set()
-                    else:
-                        desired_ids = set(hidden_existing_ids)
+                    desired_ids = set(hidden_existing_ids)
 
-                    to_add = desired_ids - existing_ids
-                    to_remove = existing_ids - desired_ids
+                to_add = desired_ids - existing_ids
+                to_remove = existing_ids - desired_ids
 
-                    try:
-                        for pid in to_add:
-                            vote_yes(st.session_state["user_id"], pid)
-                        for pid in to_remove:
-                            vote_remove(st.session_state["user_id"], pid)
-                        st.success("Dine valg er gemt.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Kunne ikke gemme valg: {e}")
+                try:
+                    for pid in to_add:
+                        vote_yes(st.session_state["user_id"], pid)
+                    for pid in to_remove:
+                        vote_remove(st.session_state["user_id"], pid)
+                    st.success("Dine valg er gemt.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Kunne ikke gemme valg: {e}")
 
 
         # --- Mine valg ---
