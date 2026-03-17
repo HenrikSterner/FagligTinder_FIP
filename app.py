@@ -316,8 +316,6 @@ st.session_state.setdefault("user_name", "")
 st.session_state.setdefault("voted_problem_ids", set())  # session-only guard
 st.session_state.setdefault("creating_user", False)
 st.session_state.setdefault("pending_user_name", "")
-st.session_state.setdefault("hide_own_problems", True)
-st.session_state.setdefault("force_show_own_problems", False)
 st.session_state.setdefault("just_created_problem_id", None)
 st.session_state.setdefault("busy_vote_pid", None)
 st.session_state.setdefault("busy_vote_action", None)   # "yes" eller "undo"
@@ -383,11 +381,7 @@ with tab1:
             st.error(f"Kunne ikke hente udfordringer: {e}")
             problems = []
 
-        if st.session_state.get("force_show_own_problems"):
-            st.session_state["hide_own_problems"] = False
-            st.session_state["force_show_own_problems"] = False
-
-        hide_own = st.checkbox("Skjul mine egne udfordringer", key="hide_own_problems")
+        hide_own = st.checkbox("Skjul mine egne udfordringer", value=False)
         if hide_own:
             problems = [p for p in problems if p.get("userId") != st.session_state["user_id"]]
 
@@ -478,7 +472,6 @@ with tab1:
                 with st.spinner("Opretter udfordring..."):
                     try:
                         pid = create_problem(st.session_state["user_id"], candidate)
-                        st.session_state["force_show_own_problems"] = True
                         st.session_state["just_created_problem_id"] = pid
                         st.rerun()
                     except Exception as e:
