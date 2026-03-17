@@ -1,19 +1,21 @@
-# Faglig Tinder (SQLite)
+# Faglig Tinder
 
-Denne version bruger SQLite i stedet for MySQL.
+Denne version kan koere med Neon PostgreSQL (anbefalet til Streamlit Share) og har SQLite som lokal fallback.
 
 ## Filer
 - `app.py`: Bruger-app til at oprette bruger, udfordringer og stemme
 - `overview_app.py`: Oversigt over udfordringer og hvem der har valgt dem
-- `db_sqlite.py`: Database-lag og auto-oprettelse af tabeller
+- `db_sqlite.py`: Database-lag og auto-oprettelse af tabeller (PostgreSQL eller SQLite fallback)
 - `requirements.txt`: Python dependencies
 
 ## Database
-- Standard fil: `faglig_tinder.db` (oprettes automatisk ved opstart)
-- Tabeller:
-  - `Users(id, navn)`
-  - `Problem(id, tekst, userId)`
-  - `Vote(userId, problemId)`
+Tabeller (oprettes automatisk ved opstart):
+- `Users(id, navn)`
+- `Problem(id, tekst, userId)`
+- `Vote(userId, problemId)`
+
+Lokal fallback uden `database_url`:
+- `faglig_tinder.db`
 
 ## Lokal kørsel
 ```bash
@@ -26,11 +28,17 @@ For oversigtssiden:
 streamlit run overview_app.py
 ```
 
-## Publish (Streamlit Cloud)
+## Publish (Streamlit Share + Neon)
 1. Push mappen til GitHub.
-2. Opret en app med entrypoint `app.py`.
-3. Brug `requirements.txt` automatisk.
+2. Opret app i Streamlit Share med entrypoint `app.py`.
+3. I app settings -> Secrets, indsaet:
 
-Valgfrit: Du kan sætte `sqlite_db_path` i `st.secrets` for at vælge en anden database-sti.
+```toml
+database_url = "postgresql://<user>:<password>@<host>/<db>?sslmode=require&channel_binding=require"
+```
 
-Bemærk: På nogle hosting-platforme er filsystemet midlertidigt, så SQLite-data kan blive nulstillet ved redeploy/restart.
+4. Deploy/redeploy appen.
+
+Bemaerk:
+- `database_url` i secrets bliver brugt foerst.
+- Hvis `database_url` mangler, bruges lokal SQLite fallback (ikke egnet til delt cloud-data).

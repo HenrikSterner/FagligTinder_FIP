@@ -1,1 +1,2 @@
 streamlit>=1.36
+psycopg2-binary>=2.9

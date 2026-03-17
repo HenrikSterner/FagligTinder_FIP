@@ -1,5 +1,5 @@
 import streamlit as st
-import sqlite3
+from collections import defaultdict
 
 import time
 
@@ -30,10 +30,13 @@ def ensure_user_strict(navn: str) -> int:
         raise ValueError("Brugernavnet er optaget. Indtast et andet brugernavn")
 
     try:
-        user_id = db_execute("INSERT INTO Users (navn) VALUES (?)", (navn,))
+        user_id = db_execute("INSERT INTO Users (navn) VALUES (?) RETURNING id", (navn,))
         return int(user_id)
-    except sqlite3.IntegrityError:
-        raise ValueError("Brugernavnet er optaget. Indtast et andet brugernavn")
+    except Exception as e:
+        msg = str(e).lower()
+        if "duplicate" in msg or "unique" in msg:
+            raise ValueError("Brugernavnet er optaget. Indtast et andet brugernavn")
+        raise
 
 def list_problems():
     return db_fetchall(
@@ -44,7 +47,7 @@ def list_problems():
 
 def create_problem(user_id: int, tekst: str) -> int:
     tekst = tekst.strip()
-    pid = int(db_execute("INSERT INTO Problem (tekst, userId) VALUES (?, ?)", (tekst, user_id)))
+    pid = int(db_execute("INSERT INTO Problem (tekst, userId) VALUES (?, ?) RETURNING id", (tekst, user_id)))
     return pid
 
 def vote_yes(user_id: int, problem_id: int):
@@ -108,57 +111,73 @@ def matches_for_user(user_id: int):
 
 
 def fetch_problem_overview_rows():
-        return db_fetchall(
-                """
-                SELECT
-                    p.id AS problem_id,
-                    p.tekst AS udfordring,
-                    COALESCE((
-                        SELECT COUNT(DISTINCT v.userId)
-                        FROM Vote v
-                        WHERE v.problemId = p.id
-                    ), 0) AS antal_valg,
-                    COALESCE((
-                        SELECT GROUP_CONCAT(navn, ', ')
-                        FROM (
-                            SELECT DISTINCT u2.navn AS navn
-                            FROM Vote v
-                            JOIN Users u2 ON u2.id = v.userId
-                            WHERE v.problemId = p.id
-                            ORDER BY u2.navn COLLATE NOCASE
-                        )
-                    ), '') AS valgt_af
-                FROM Problem p
-                ORDER BY p.id ASC;
-                """
+    problems = db_fetchall(
+        """
+        SELECT p.id AS problem_id, p.tekst AS udfordring
+        FROM Problem p
+        ORDER BY p.id ASC
+        """
+    )
+    votes = db_fetchall(
+        """
+        SELECT v.problemId AS problem_id, u.navn AS navn
+        FROM Vote v
+        JOIN Users u ON u.id = v.userId
+        """
+    )
+
+    names_by_problem = defaultdict(set)
+    for row in votes:
+        names_by_problem[int(row["problem_id"])].add(str(row["navn"]))
+
+    out = []
+    for p in problems:
+        pid = int(p["problem_id"])
+        names = sorted(names_by_problem.get(pid, set()), key=lambda n: n.lower())
+        out.append(
+            {
+                "problem_id": pid,
+                "udfordring": p["udfordring"],
+                "antal_valg": len(names),
+                "valgt_af": ", ".join(names),
+            }
         )
+    return out
 
 
 def fetch_user_overview_rows():
-        return db_fetchall(
-                """
-                SELECT
-                    u.id AS user_id,
-                    u.navn AS bruger,
-                    COALESCE((
-                        SELECT COUNT(DISTINCT v.problemId)
-                        FROM Vote v
-                        WHERE v.userId = u.id
-                    ), 0) AS antal_valg,
-                    COALESCE((
-                        SELECT GROUP_CONCAT(problem_txt, ' | ')
-                        FROM (
-                            SELECT DISTINCT printf('#%d %s', p.id, p.tekst) AS problem_txt
-                            FROM Vote v
-                            JOIN Problem p ON p.id = v.problemId
-                            WHERE v.userId = u.id
-                            ORDER BY p.id
-                        )
-                    ), '') AS valgte_udfordringer
-                FROM Users u
-                ORDER BY u.navn COLLATE NOCASE;
-                """
+    users = db_fetchall(
+        """
+        SELECT u.id AS user_id, u.navn AS bruger
+        FROM Users u
+        ORDER BY u.navn
+        """
+    )
+    selections = db_fetchall(
+        """
+        SELECT v.userId AS user_id, p.id AS problem_id, p.tekst AS udfordring
+        FROM Vote v
+        JOIN Problem p ON p.id = v.problemId
+        """
+    )
+
+    picks_by_user = defaultdict(list)
+    for row in selections:
+        picks_by_user[int(row["user_id"])].append((int(row["problem_id"]), str(row["udfordring"])))
+
+    out = []
+    for u in users:
+        uid = int(u["user_id"])
+        picks = sorted(set(picks_by_user.get(uid, [])), key=lambda x: x[0])
+        out.append(
+            {
+                "user_id": uid,
+                "bruger": u["bruger"],
+                "antal_valg": len(picks),
+                "valgte_udfordringer": " | ".join([f"#{pid} {tekst}" for pid, tekst in picks]),
+            }
         )
+    return out
 
 
 def fetch_table_counts():
@@ -208,7 +227,7 @@ def fetch_all_users():
                         WHERE v.userId = u.id
                     ), 0) AS vote_count
         FROM Users
-        ORDER BY navn COLLATE NOCASE
+        ORDER BY LOWER(navn)
         """
     )
 
@@ -297,9 +316,6 @@ st.session_state.setdefault("user_name", "")
 st.session_state.setdefault("voted_problem_ids", set())  # session-only guard
 st.session_state.setdefault("creating_user", False)
 st.session_state.setdefault("pending_user_name", "")
-st.session_state.setdefault("creating_problem", False)
-st.session_state.setdefault("pending_problem_text", "")
-st.session_state.setdefault("problem_input_nonce", 0)
 st.session_state.setdefault("hide_own_problems", True)
 st.session_state.setdefault("just_created_problem_id", None)
 st.session_state.setdefault("busy_vote_pid", None)
@@ -443,33 +459,25 @@ with tab1:
         st.subheader("Kan du ikke finde en lignende? Opret din egen")
 
         max_len = 280
-        problem_input_key = f"new_problem_text_{st.session_state['problem_input_nonce']}"
-        tekst = st.text_area("Din udfordring", key=problem_input_key, height=120)
+        with st.form("create_problem_form", clear_on_submit=True):
+            tekst = st.text_input("Din udfordring")
+            submit_problem = st.form_submit_button("Indsend udfordring", type="primary")
 
-        if st.button("Indsend udfordring", type="primary", disabled=st.session_state["creating_problem"]):
+        if submit_problem:
             candidate = tekst.strip()
             if not candidate:
                 st.warning("Skriv en udfordring foerst.")
             elif len(candidate) > max_len:
                 st.warning(f"Din udfordring er for lang (max {max_len} tegn).")
             else:
-                st.session_state["pending_problem_text"] = candidate
-                st.session_state["creating_problem"] = True
-                st.rerun()
-
-        if st.session_state["creating_problem"]:
-            with st.spinner("Opretter udfordring..."):
-                try:
-                    pid = create_problem(st.session_state["user_id"], st.session_state["pending_problem_text"])
-                    st.session_state["creating_problem"] = False
-                    st.session_state["pending_problem_text"] = ""
-                    st.session_state["problem_input_nonce"] += 1
-                    st.session_state["hide_own_problems"] = False
-                    st.session_state["just_created_problem_id"] = pid
-                    st.rerun()
-                except Exception as e:
-                    st.session_state["creating_problem"] = False
-                    st.error(f"Kunne ikke oprette udfordring: {e}")
+                with st.spinner("Opretter udfordring..."):
+                    try:
+                        pid = create_problem(st.session_state["user_id"], candidate)
+                        st.session_state["hide_own_problems"] = False
+                        st.session_state["just_created_problem_id"] = pid
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Kunne ikke oprette udfordring: {e}")
 # -------------------------
 # TAB 2: Matches
 # -------------------------
