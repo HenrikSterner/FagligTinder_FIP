@@ -1,18 +1,12 @@
 import streamlit as st
 from collections import defaultdict
 
-import time
-
 from db_sqlite import execute as db_execute
 from db_sqlite import fetchall as db_fetchall
 from db_sqlite import fetchone as db_fetchone
 from db_sqlite import init_db
 
 st.set_page_config(page_title="Faglig Tinder", layout="centered")
-
-st.write("VERSION:", "2026-03-17-FILTERLIST")
-st.write("FILE:", __file__)
-st.write("TIME:", time.time())
 
 init_db()
 
