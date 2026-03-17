@@ -340,6 +340,7 @@ st.session_state.setdefault("just_created_problem_id", None)
 st.session_state.setdefault("busy_vote_pid", None)
 st.session_state.setdefault("busy_vote_action", None)   # "yes" eller "undo"
 st.session_state.setdefault("vote_busy", False)
+st.session_state.setdefault("vote_form_seed", None)
 
 MAX_CHOICES = 1
 
@@ -425,6 +426,18 @@ if active_page == "Udfordringer":
             # beregn én gang
             existing_ids = {int(v["problem_id"]) for v in existing_votes}
             visible_ids = {int(p["id"]) for p in problems}
+            vote_form_seed = (
+                st.session_state["user_id"],
+                tuple(sorted(existing_ids)),
+                tuple(sorted(visible_ids)),
+            )
+
+            if st.session_state.get("vote_form_seed") != vote_form_seed:
+                for p in problems:
+                    pid = int(p["id"])
+                    key = f"vote_pick_{st.session_state['user_id']}_{pid}"
+                    st.session_state[key] = pid in existing_ids
+                st.session_state["vote_form_seed"] = vote_form_seed
 
             with st.form("vote_form"):
                 st.caption("Du kan vælge én udfordring ad gangen, og du kan altid ændre dit valg igen.")
@@ -435,7 +448,6 @@ if active_page == "Udfordringer":
                     oprettet_af = p.get("oprettet_af") or "ukendt"
 
                     key = f"vote_pick_{st.session_state['user_id']}_{pid}"
-                    st.session_state[key] = pid in existing_ids
 
                     st.checkbox(
                         f"#{pid} - {tekst} (oprettet af: {oprettet_af})",
