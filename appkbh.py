@@ -651,16 +651,6 @@ if active_page == "Udfordringer":
             problems = []
             existing_votes = []
 
-        problem_filter = st.selectbox(
-            "Vis udfordringer",
-            ["Alle", "Kun andres", "Kun mine"],
-            index=1,
-        )
-        if problem_filter == "Kun andres":
-            problems = [p for p in problems if p.get("user_id") != st.session_state["user_id"]]
-        elif problem_filter == "Kun mine":
-            problems = [p for p in problems if p.get("user_id") == st.session_state["user_id"]]
-
         if not problems:
             st.info("Ingen udfordringer endnu.")
         else:
@@ -684,9 +674,6 @@ if active_page == "Udfordringer":
             with st.form("vote_form"):
                 st.caption("Du kan kun vælge én udfordring ad gangen.")
 
-                if current_selected_id is not None and current_selected_id not in visible_ids:
-                    st.info("Dit nuværende valg er skjult af filtret. Vælg en synlig udfordring for at skifte.")
-
                 option_ids = [None] + [int(p["id"]) for p in problems]
                 labels_by_id = {}
                 for p in problems:
@@ -704,15 +691,12 @@ if active_page == "Udfordringer":
                 submitted = st.form_submit_button("Gem valg", type="primary")
 
             if submitted:
-                hidden_existing_ids = existing_ids - visible_ids
                 selected_visible_id = st.session_state.get("vote_selected_problem_id")
 
                 if selected_visible_id is not None:
                     desired_ids = {int(selected_visible_id)}
-                elif problem_filter == "Alle":
-                    desired_ids = set()
                 else:
-                    desired_ids = set(hidden_existing_ids)
+                    desired_ids = set()
 
                 to_add = desired_ids - existing_ids
                 to_remove = existing_ids - desired_ids
