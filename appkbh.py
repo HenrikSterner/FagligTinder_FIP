@@ -1,6 +1,7 @@
 import os
 import sys
 
+import pandas as pd
 import streamlit as st
 
 from db_sqlite import execute as db_execute
@@ -55,6 +56,7 @@ def invalidate_vote_overview_caches():
     fetch_table_counts.clear()
     fetch_user_network_edges.clear()
     fetch_all_users.clear()
+    fetch_vote_links.clear()
 
 
 def invalidate_after_user_create():
@@ -412,8 +414,32 @@ def fetch_all_users():
     )
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_vote_links():
+    return db_fetchall(
+        """
+        SELECT
+            u.id AS user_id,
+            u.navn AS bruger,
+            p.id AS problem_id,
+            p.tekst AS udfordring
+        FROM Vote v
+        JOIN Users u ON u.id = v.userId
+        JOIN Problem p ON p.id = v.problemId
+        ORDER BY LOWER(u.navn), p.id
+        """
+    )
+
+
 def _dot_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _short_problem_label(text: str, limit: int = 28) -> str:
+    text = str(text).strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
 
 
 def _color_for_votes(vote_count: int, max_votes: int) -> str:
@@ -465,6 +491,69 @@ def build_user_network_dot(users, edges):
 
     lines.append("}")
     return "\n".join(lines)
+
+
+def build_bipartite_dot(user_rows, problem_rows, vote_links):
+    lines = [
+        "digraph G {",
+        "  rankdir=LR;",
+        "  graph [overlap=false, splines=true, nodesep=0.5, ranksep=1.2];",
+        "  node [fontname=\"Helvetica\", style=filled];",
+        "  edge [color=\"#9b7a52\"];",
+        "  { rank=same;",
+    ]
+
+    for user in user_rows:
+        uid = int(user["user_id"])
+        label = _dot_escape(str(user["bruger"]))
+        lines.append(
+            f'    u{uid} [label="{label}", shape=ellipse, fillcolor="#efd1a8", color="#8B4513", fontcolor="#2c1d10"];'
+        )
+
+    lines.append("  }")
+    lines.append("  { rank=same;")
+
+    for problem in problem_rows:
+        pid = int(problem["problem_id"])
+        text = _short_problem_label(problem["udfordring"])
+        label = _dot_escape(f"#{pid} {text}")
+        lines.append(
+            f'    p{pid} [label="{label}", shape=box, fillcolor="#f7ead0", color="#a8612f", fontcolor="#2c1d10"];'
+        )
+
+    lines.append("  }")
+
+    for link in vote_links:
+        uid = int(link["user_id"])
+        pid = int(link["problem_id"])
+        lines.append(f"  u{uid} -> p{pid};")
+
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def build_heatmap_dataframe(user_rows, problem_rows, vote_links):
+    user_labels = [str(row["bruger"]) for row in user_rows]
+    problem_labels = {int(row["problem_id"]): f"#{row['problem_id']}" for row in problem_rows}
+
+    if not user_labels or not problem_labels:
+        return pd.DataFrame()
+
+    matrix = pd.DataFrame(
+        0,
+        index=user_labels,
+        columns=[problem_labels[int(row["problem_id"])] for row in problem_rows],
+        dtype=int,
+    )
+
+    user_name_by_id = {int(row["user_id"]): str(row["bruger"]) for row in user_rows}
+    for link in vote_links:
+        user_name = user_name_by_id.get(int(link["user_id"]))
+        problem_label = problem_labels.get(int(link["problem_id"]))
+        if user_name and problem_label:
+            matrix.loc[user_name, problem_label] = 1
+
+    return matrix
 
 
 def handle_pending_vote():
@@ -722,6 +811,7 @@ else:
         problem_rows = fetch_problem_overview_rows()
         user_rows = fetch_user_overview_rows()
         counts = fetch_table_counts()
+        vote_links = fetch_vote_links()
     except Exception as e:
         st.error(f"Kunne ikke hente oversigt: {e}")
         st.stop()
@@ -754,6 +844,31 @@ else:
         st.info("Ingen brugere i databasen endnu.")
     else:
         st.dataframe(user_rows, use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.markdown("**Bipartite graf: brugere og udfordringer**")
+    if not user_rows or not problem_rows:
+        st.info("Der skal være både brugere og udfordringer for at vise grafen.")
+    elif not vote_links:
+        st.info("Der er endnu ingen stemmer at tegne relationer ud fra.")
+    else:
+        bipartite_dot = build_bipartite_dot(user_rows, problem_rows, vote_links)
+        st.graphviz_chart(bipartite_dot, use_container_width=True)
+
+    st.divider()
+    st.markdown("**Heatmap over valg**")
+    if not user_rows or not problem_rows:
+        st.info("Der skal være både brugere og udfordringer for at vise heatmap.")
+    else:
+        heatmap_df = build_heatmap_dataframe(user_rows, problem_rows, vote_links)
+        if heatmap_df.empty:
+            st.info("Ingen data at vise i heatmap endnu.")
+        else:
+            st.caption("Rækker er brugere. Kolonner er udfordringer. 1 betyder valgt.")
+            st.dataframe(
+                heatmap_df.style.background_gradient(cmap="YlOrBr", axis=None),
+                use_container_width=True,
+            )
 
     st.divider()
     st.markdown("**Netvaerksgraf over brugerrelationer**")
