@@ -4,7 +4,6 @@ import sys
 os.environ["FAGLIG_TINDER_DB_PREFIX"] = "KBH"
 os.environ["FAGLIG_TINDER_DB_STRICT"] = "1"
 
-import pandas as pd
 import streamlit as st
 
 from db_sqlite import execute as db_execute
@@ -535,30 +534,6 @@ def build_bipartite_dot(user_rows, problem_rows, vote_links):
     return "\n".join(lines)
 
 
-def build_heatmap_dataframe(user_rows, problem_rows, vote_links):
-    user_labels = [str(row["bruger"]) for row in user_rows]
-    problem_labels = {int(row["problem_id"]): f"#{row['problem_id']}" for row in problem_rows}
-
-    if not user_labels or not problem_labels:
-        return pd.DataFrame()
-
-    matrix = pd.DataFrame(
-        0,
-        index=user_labels,
-        columns=[problem_labels[int(row["problem_id"])] for row in problem_rows],
-        dtype=int,
-    )
-
-    user_name_by_id = {int(row["user_id"]): str(row["bruger"]) for row in user_rows}
-    for link in vote_links:
-        user_name = user_name_by_id.get(int(link["user_id"]))
-        problem_label = problem_labels.get(int(link["problem_id"]))
-        if user_name and problem_label:
-            matrix.loc[user_name, problem_label] = 1
-
-    return matrix
-
-
 def handle_pending_vote():
     pid = st.session_state.get("busy_vote_pid")
     action = st.session_state.get("busy_vote_action")
@@ -857,21 +832,6 @@ else:
     else:
         bipartite_dot = build_bipartite_dot(user_rows, problem_rows, vote_links)
         st.graphviz_chart(bipartite_dot, use_container_width=True)
-
-    st.divider()
-    st.markdown("**Heatmap over valg**")
-    if not user_rows or not problem_rows:
-        st.info("Der skal være både brugere og udfordringer for at vise heatmap.")
-    else:
-        heatmap_df = build_heatmap_dataframe(user_rows, problem_rows, vote_links)
-        if heatmap_df.empty:
-            st.info("Ingen data at vise i heatmap endnu.")
-        else:
-            st.caption("Rækker er brugere. Kolonner er udfordringer. 1 betyder valgt.")
-            st.dataframe(
-                heatmap_df.style.background_gradient(cmap="YlOrBr", axis=None),
-                use_container_width=True,
-            )
 
     st.divider()
     st.markdown("**Netvaerksgraf over brugerrelationer**")
