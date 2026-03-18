@@ -1,10 +1,10 @@
 import streamlit as st
-from collections import defaultdict
 
 from db_sqlite import execute as db_execute
 from db_sqlite import fetchall as db_fetchall
 from db_sqlite import fetchone as db_fetchone
 from db_sqlite import init_db
+from db_sqlite import is_postgres
 
 st.set_page_config(page_title="Vejle FIP 19.03.2026", layout="centered")
 
@@ -14,8 +14,50 @@ def ensure_db_ready():
     return True
 
 
-def invalidate_data_cache():
-    st.cache_data.clear()
+def invalidate_user_related_caches(user_id: int | None = None):
+    if user_id is not None:
+        my_votes.clear(user_id)
+        count_choices.clear(user_id)
+
+    # A vote can affect multiple users' matches, so clear this cache function-wide.
+    matches_for_user.clear()
+
+
+def invalidate_problem_related_caches():
+    list_problems.clear()
+
+
+def invalidate_problem_overview_caches():
+    fetch_problem_overview_rows.clear()
+    fetch_table_counts.clear()
+
+
+def invalidate_user_overview_caches():
+    fetch_user_overview_rows.clear()
+    fetch_all_users.clear()
+
+
+def invalidate_vote_overview_caches():
+    fetch_problem_overview_rows.clear()
+    fetch_user_overview_rows.clear()
+    fetch_table_counts.clear()
+    fetch_user_network_edges.clear()
+    fetch_all_users.clear()
+
+
+def invalidate_after_user_create():
+    invalidate_user_overview_caches()
+    fetch_table_counts.clear()
+
+
+def invalidate_after_problem_create():
+    invalidate_problem_related_caches()
+    invalidate_problem_overview_caches()
+
+
+def invalidate_after_vote_change(user_id: int):
+    invalidate_user_related_caches(user_id)
+    invalidate_vote_overview_caches()
 
 
 ensure_db_ready()
@@ -35,7 +77,7 @@ def ensure_user_strict(navn: str) -> int:
 
     try:
         user_id = db_execute("INSERT INTO Users (navn) VALUES (?) RETURNING id", (navn,))
-        invalidate_data_cache()
+        invalidate_after_user_create()
         return int(user_id)
     except Exception as e:
         msg = str(e).lower()
@@ -54,7 +96,7 @@ def list_problems():
 def create_problem(user_id: int, tekst: str) -> int:
     tekst = tekst.strip()
     pid = int(db_execute("INSERT INTO Problem (tekst, userId) VALUES (?, ?) RETURNING id", (tekst, user_id)))
-    invalidate_data_cache()
+    invalidate_after_problem_create()
     return pid
 
 def vote_yes(user_id: int, problem_id: int):
@@ -63,7 +105,7 @@ def vote_yes(user_id: int, problem_id: int):
             "INSERT INTO Vote (problemId, userId) VALUES (?, ?)",
             (problem_id, user_id),
         )
-        invalidate_data_cache()
+        invalidate_after_vote_change(user_id)
     except Exception as e:
         msg = str(e).lower()
         if "duplicate" in msg or "unique" in msg:
@@ -75,8 +117,7 @@ def vote_remove(user_id: int, problem_id: int):
         "DELETE FROM Vote WHERE problemId = ? AND userId = ?",
         (problem_id, user_id),
     )
-
-    invalidate_data_cache()
+    invalidate_after_vote_change(user_id)
 
 
 def has_voted_db(user_id: int, problem_id: int) -> bool:
@@ -127,74 +168,117 @@ def matches_for_user(user_id: int):
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_problem_overview_rows():
-    problems = db_fetchall(
+    if is_postgres():
+        return db_fetchall(
+            """
+            SELECT
+                p.id AS problem_id,
+                p.tekst AS udfordring,
+                COALESCE(v_count.antal_valg, 0) AS antal_valg,
+                COALESCE(v_names.valgt_af, '') AS valgt_af
+            FROM Problem p
+            LEFT JOIN (
+                SELECT v.problemId, COUNT(DISTINCT v.userId) AS antal_valg
+                FROM Vote v
+                GROUP BY v.problemId
+            ) v_count ON v_count.problemId = p.id
+            LEFT JOIN (
+                SELECT x.problemId, STRING_AGG(x.navn, ', ' ORDER BY x.navn) AS valgt_af
+                FROM (
+                    SELECT DISTINCT v.problemId, u.navn
+                    FROM Vote v
+                    JOIN Users u ON u.id = v.userId
+                ) x
+                GROUP BY x.problemId
+            ) v_names ON v_names.problemId = p.id
+            ORDER BY p.id ASC
+            """
+        )
+
+    return db_fetchall(
         """
-        SELECT p.id AS problem_id, p.tekst AS udfordring
+        SELECT
+            p.id AS problem_id,
+            p.tekst AS udfordring,
+            COALESCE((
+                SELECT COUNT(DISTINCT v.userId)
+                FROM Vote v
+                WHERE v.problemId = p.id
+            ), 0) AS antal_valg,
+            COALESCE((
+                SELECT GROUP_CONCAT(navn, ', ')
+                FROM (
+                    SELECT DISTINCT u2.navn AS navn
+                    FROM Vote v
+                    JOIN Users u2 ON u2.id = v.userId
+                    WHERE v.problemId = p.id
+                    ORDER BY u2.navn COLLATE NOCASE
+                )
+            ), '') AS valgt_af
         FROM Problem p
         ORDER BY p.id ASC
         """
     )
-    votes = db_fetchall(
-        """
-        SELECT v.problemId AS problem_id, u.navn AS navn
-        FROM Vote v
-        JOIN Users u ON u.id = v.userId
-        """
-    )
-
-    names_by_problem = defaultdict(set)
-    for row in votes:
-        names_by_problem[int(row["problem_id"])].add(str(row["navn"]))
-
-    out = []
-    for p in problems:
-        pid = int(p["problem_id"])
-        names = sorted(names_by_problem.get(pid, set()), key=lambda n: n.lower())
-        out.append(
-            {
-                "problem_id": pid,
-                "udfordring": p["udfordring"],
-                "antal_valg": len(names),
-                "valgt_af": ", ".join(names),
-            }
-        )
-    return out
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_user_overview_rows():
-    users = db_fetchall(
-        """
-        SELECT u.id AS user_id, u.navn AS bruger
-        FROM Users u
-        ORDER BY u.navn
-        """
-    )
-    selections = db_fetchall(
-        """
-        SELECT v.userId AS user_id, p.id AS problem_id, p.tekst AS udfordring
-        FROM Vote v
-        JOIN Problem p ON p.id = v.problemId
-        """
-    )
-
-    picks_by_user = defaultdict(list)
-    for row in selections:
-        picks_by_user[int(row["user_id"])].append((int(row["problem_id"]), str(row["udfordring"])))
-
-    out = []
-    for u in users:
-        uid = int(u["user_id"])
-        picks = sorted(set(picks_by_user.get(uid, [])), key=lambda x: x[0])
-        out.append(
-            {
-                "user_id": uid,
-                "bruger": u["bruger"],
-                "antal_valg": len(picks),
-                "valgte_udfordringer": " | ".join([f"#{pid} {tekst}" for pid, tekst in picks]),
-            }
+    if is_postgres():
+        return db_fetchall(
+            """
+            SELECT
+                u.id AS user_id,
+                u.navn AS bruger,
+                COALESCE(v_count.antal_valg, 0) AS antal_valg,
+                COALESCE(v_picks.valgte_udfordringer, '') AS valgte_udfordringer
+            FROM Users u
+            LEFT JOIN (
+                SELECT v.userId, COUNT(DISTINCT v.problemId) AS antal_valg
+                FROM Vote v
+                GROUP BY v.userId
+            ) v_count ON v_count.userId = u.id
+            LEFT JOIN (
+                SELECT
+                    x.userId,
+                    STRING_AGG(x.problem_txt, ' | ' ORDER BY x.problem_id) AS valgte_udfordringer
+                FROM (
+                    SELECT DISTINCT
+                        v.userId,
+                        p.id AS problem_id,
+                        ('#' || p.id::text || ' ' || p.tekst) AS problem_txt
+                    FROM Vote v
+                    JOIN Problem p ON p.id = v.problemId
+                ) x
+                GROUP BY x.userId
+            ) v_picks ON v_picks.userId = u.id
+            ORDER BY LOWER(u.navn)
+            """
         )
-    return out
+
+    return db_fetchall(
+        """
+        SELECT
+            u.id AS user_id,
+            u.navn AS bruger,
+            COALESCE((
+                SELECT COUNT(DISTINCT v.problemId)
+                FROM Vote v
+                WHERE v.userId = u.id
+            ), 0) AS antal_valg,
+            COALESCE((
+                SELECT GROUP_CONCAT(problem_txt, ' | ')
+                FROM (
+                    SELECT DISTINCT printf('#%d %s', p.id, p.tekst) AS problem_txt
+                    FROM Vote v
+                    JOIN Problem p ON p.id = v.problemId
+                    WHERE v.userId = u.id
+                    ORDER BY p.id
+                )
+            ), '') AS valgte_udfordringer
+        FROM Users u
+        ORDER BY u.navn COLLATE NOCASE
+        """
+    )
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -238,15 +322,13 @@ def fetch_user_network_edges():
 def fetch_all_users():
     return db_fetchall(
         """
-                SELECT
-                    u.id,
-                    u.navn,
-                    COALESCE((
-                        SELECT COUNT(DISTINCT v.problemId)
-                        FROM Vote v
-                        WHERE v.userId = u.id
-                    ), 0) AS vote_count
+        SELECT
+            u.id,
+            u.navn,
+            COUNT(DISTINCT v.problemId) AS vote_count
         FROM Users u
+        LEFT JOIN Vote v ON v.userId = u.id
+        GROUP BY u.id, u.navn
         ORDER BY LOWER(u.navn)
         """
     )
@@ -563,8 +645,6 @@ else:
         problem_rows = fetch_problem_overview_rows()
         user_rows = fetch_user_overview_rows()
         counts = fetch_table_counts()
-        users = fetch_all_users()
-        network_edges = fetch_user_network_edges()
     except Exception as e:
         st.error(f"Kunne ikke hente oversigt: {e}")
         st.stop()
@@ -601,11 +681,19 @@ else:
     st.divider()
     st.markdown("**Netvaerksgraf over brugerrelationer**")
     st.caption("Kant vaegt = antal faelles udfordringer, som to brugere begge har valgt.")
+    show_network_graph = st.checkbox("Vis netvaerksgraf", value=False)
 
-    if len(users) < 2:
-        st.info("Der skal vaere mindst 2 brugere for at vise netvaerksgrafen.")
-    elif not network_edges:
-        st.info("Der er endnu ingen faelles valg mellem brugere.")
-    else:
-        dot = build_user_network_dot(users, network_edges)
-        st.graphviz_chart(dot, use_container_width=True)
+    if show_network_graph:
+        try:
+            users = fetch_all_users()
+            network_edges = fetch_user_network_edges()
+        except Exception as e:
+            st.error(f"Kunne ikke hente netvaerksgraf: {e}")
+        else:
+            if len(users) < 2:
+                st.info("Der skal vaere mindst 2 brugere for at vise netvaerksgrafen.")
+            elif not network_edges:
+                st.info("Der er endnu ingen faelles valg mellem brugere.")
+            else:
+                dot = build_user_network_dot(users, network_edges)
+                st.graphviz_chart(dot, use_container_width=True)

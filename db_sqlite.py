@@ -32,6 +32,10 @@ def _use_postgres() -> bool:
     return bool(_get_database_url()) and psycopg2 is not None
 
 
+def is_postgres() -> bool:
+    return _use_postgres()
+
+
 @st.cache_resource(show_spinner=False)
 def _postgres_pool(database_url: str):
     if psycopg2 is None:
