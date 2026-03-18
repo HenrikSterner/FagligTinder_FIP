@@ -1,11 +1,11 @@
 # Faglig Tinder
 
-Denne version kan koere med Neon PostgreSQL (anbefalet til Streamlit Share) og har SQLite som lokal fallback.
+Denne version kan koere med PostgreSQL, MySQL og SQLite fallback.
 
 ## Filer
 - `app.py`: Bruger-app til at oprette bruger, udfordringer og stemme
 - `overview_app.py`: Oversigt over udfordringer og hvem der har valgt dem
-- `db_sqlite.py`: Database-lag og auto-oprettelse af tabeller (PostgreSQL eller SQLite fallback)
+- `db_sqlite.py`: Database-lag og auto-oprettelse af tabeller (PostgreSQL, MySQL eller SQLite fallback)
 - `requirements.txt`: Python dependencies
 
 ## Database
@@ -14,7 +14,7 @@ Tabeller (oprettes automatisk ved opstart):
 - `Problem(id, tekst, userId)`
 - `Vote(userId, problemId)`
 
-Lokal fallback uden `database_url`:
+Lokal fallback uden database-secrets:
 - `faglig_tinder.db`
 
 ## Lokal kørsel
@@ -28,7 +28,7 @@ For oversigtssiden:
 streamlit run overview_app.py
 ```
 
-## Publish (Streamlit Share + Neon)
+## Publish (Streamlit Share + PostgreSQL)
 1. Push mappen til GitHub.
 2. Opret app i Streamlit Share med entrypoint `app.py`.
 3. I app settings -> Secrets, indsaet:
@@ -41,4 +41,14 @@ database_url = "postgresql://<user>:<password>@<host>/<db>?sslmode=require&chann
 
 Bemaerk:
 - `database_url` i secrets bliver brugt foerst.
-- Hvis `database_url` mangler, bruges lokal SQLite fallback (ikke egnet til delt cloud-data).
+- Hvis `database_url` mangler, kan appen bruge MySQL via secrets/env:
+
+```toml
+DB_ADDRESS = "<mysql-host>"
+DB_USER = "<mysql-user>"
+DB_PASS = "<mysql-password>"
+DB_NAME = "<mysql-database>"
+DB_PORT = 3306
+```
+
+- Hvis hverken PostgreSQL eller MySQL er konfigureret, bruges lokal SQLite fallback (ikke egnet til delt cloud-data).

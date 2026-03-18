@@ -10,7 +10,7 @@ from db_sqlite import init_db
 from db_sqlite import is_mysql
 from db_sqlite import is_postgres
 
-APP_TITLE = os.getenv("FAGLIG_TINDER_APP_TITLE", "Vejle FIP 19.03.2026")
+APP_TITLE = "KBH FIP"
 
 
 def console_log(message: str):
