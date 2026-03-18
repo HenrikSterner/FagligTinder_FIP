@@ -52,3 +52,15 @@ DB_PORT = 3306
 ```
 
 - Hvis hverken PostgreSQL eller MySQL er konfigureret, bruges lokal SQLite fallback (ikke egnet til delt cloud-data).
+
+For `appkbh.py` kan du bruge en lokal `.streamlit/secrets.toml` med:
+
+```toml
+KBH_DB_ADDRESS = "<mysql-host>"
+KBH_DB_USER = "<mysql-user>"
+KBH_DB_PASS = "<mysql-password>"
+KBH_DB_NAME = "<mysql-database>"
+KBH_DB_PORT = 3306
+```
+
+Filen er ignoreret af git. Se `.streamlit/secrets.toml.example`.

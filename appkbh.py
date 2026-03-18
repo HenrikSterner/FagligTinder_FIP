@@ -1,6 +1,9 @@
 import os
 import sys
 
+os.environ["FAGLIG_TINDER_DB_PREFIX"] = "KBH"
+os.environ["FAGLIG_TINDER_DB_STRICT"] = "1"
+
 import pandas as pd
 import streamlit as st
 

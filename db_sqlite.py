@@ -19,23 +19,51 @@ except Exception:
     pymysql = None
 
 
+def _db_prefix() -> str:
+    return (os.getenv("FAGLIG_TINDER_DB_PREFIX") or "").strip()
+
+
+def _db_prefix_strict() -> bool:
+    return (os.getenv("FAGLIG_TINDER_DB_STRICT") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _prefixed_names(*names: str) -> list[str]:
+    prefix = _db_prefix()
+    if not prefix:
+        return list(names)
+
+    candidates = []
+    for name in names:
+        candidates.append(f"{prefix}_{name}")
+        if name.lower() != name:
+            candidates.append(f"{prefix}_{name.lower()}")
+    if not _db_prefix_strict():
+        candidates.extend(names)
+    return candidates
+
+
 def _get_database_url() -> str | None:
     try:
-        from_secrets = st.secrets.get("database_url")
+        from_secrets = None
+        for candidate in _prefixed_names("database_url", "DATABASE_URL"):
+            from_secrets = st.secrets.get(candidate)
+            if from_secrets:
+                break
     except Exception:
         from_secrets = None
     if from_secrets:
         return str(from_secrets)
 
-    from_env = os.getenv("DATABASE_URL")
-    if from_env:
-        return from_env
+    for candidate in _prefixed_names("DATABASE_URL", "database_url"):
+        from_env = os.getenv(candidate)
+        if from_env:
+            return from_env
 
     return None
 
 
 def _secret_or_env(*names: str) -> str | None:
-    for name in names:
+    for name in _prefixed_names(*names):
         try:
             value = st.secrets.get(name)
         except Exception:
@@ -121,12 +149,23 @@ def _postgres_pool(database_url: str):
 
 def _db_path() -> str:
     try:
-        configured = st.secrets.get("sqlite_db_path")
+        configured = None
+        for candidate in _prefixed_names("sqlite_db_path", "SQLITE_DB_PATH"):
+            configured = st.secrets.get(candidate)
+            if configured:
+                break
     except Exception:
         configured = None
     if configured:
         return str(configured)
-    return os.path.join(os.path.dirname(__file__), "faglig_tinder.db")
+
+    for candidate in _prefixed_names("SQLITE_DB_PATH", "sqlite_db_path"):
+        configured = os.getenv(candidate)
+        if configured:
+            return str(configured)
+
+    suffix = _db_prefix().lower() if _db_prefix() else "faglig_tinder"
+    return os.path.join(os.path.dirname(__file__), f"{suffix}.db")
 
 
 def _adapt_sql(sql: str) -> str:
