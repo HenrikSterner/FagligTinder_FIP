@@ -13,7 +13,7 @@ from db_sqlite import init_db
 from db_sqlite import is_mysql
 from db_sqlite import is_postgres
 
-APP_TITLE = "KBH FIP"
+APP_TITLE = "Faglig Tinder i Vejle"
 
 
 def console_log(message: str):
@@ -569,6 +569,7 @@ st.session_state.setdefault("busy_vote_action", None)   # "yes" eller "undo"
 st.session_state.setdefault("vote_busy", False)
 st.session_state.setdefault("vote_form_seed", None)
 st.session_state.setdefault("vote_selected_problem_id", None)
+st.session_state.setdefault("create_user_busy", False)
 
 MAX_CHOICES = 1
 
@@ -587,11 +588,23 @@ if active_page == "Udfordringer":
         st.subheader("Opret brugernavn")
         st.write("Når du er oprettet, bliver du præsenteret for de udfordringer der allerede findes.")
 
+        create_user_busy = st.session_state.get("create_user_busy", False)
+
         with st.form("create_user_form"):
-            name = st.text_input("Brugernavn", value=st.session_state["user_name"], placeholder="Fx Kathrine")
-            submitted = st.form_submit_button("Opret", type="primary")
+            name = st.text_input(
+                "Brugernavn",
+                value=st.session_state["user_name"],
+                placeholder="Fx Kathrine",
+                disabled=create_user_busy,
+            )
+            submitted = st.form_submit_button("Opret", type="primary", disabled=create_user_busy)
 
         if submitted:
+            if st.session_state.get("create_user_busy"):
+                st.info("Brugeroprettelsen er allerede sendt.")
+                st.stop()
+
+            st.session_state["create_user_busy"] = True
             console_log(f"create_user_form submitted navn='{name.strip()}'")
             with st.spinner("Opretter bruger..."):
                 try:
@@ -602,9 +615,11 @@ if active_page == "Udfordringer":
                     console_log(f"create_user_form success id={uid} navn='{name.strip()}'")
                     st.rerun()
                 except ValueError as e:
+                    st.session_state["create_user_busy"] = False
                     console_log(f"create_user_form warning navn='{name.strip()}' warning={e}")
                     st.warning(str(e))
                 except Exception as e:
+                    st.session_state["create_user_busy"] = False
                     console_log(f"create_user_form error navn='{name.strip()}' error={e}")
                     st.error(f"Kunne ikke oprette bruger: {e}")
     else:
